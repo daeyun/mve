@@ -80,6 +80,10 @@ float
 pixel_footprint (std::size_t x, std::size_t y, float depth,
     math::Matrix3f const& invproj);
 
+float
+pixel_footprint (std::size_t x, std::size_t y, float depth,
+    const OrthoParams& ortho);
+
 /**
  * Function that calculates the pixel 3D position in camera coordinates for
  * pixel (x,y) and 'depth' for a depth map with inverse K matrix 'invproj'.
@@ -87,6 +91,10 @@ pixel_footprint (std::size_t x, std::size_t y, float depth,
 math::Vec3f
 pixel_3dpos (std::size_t x, std::size_t y, float depth,
     math::Matrix3f const& invproj);
+
+math::Vec3f
+pixel_3dpos (std::size_t x, std::size_t y, float depth,
+    const OrthoParams &ortho);
 
 /**
  * Algorithm to triangulate depth maps.
@@ -105,6 +113,10 @@ TriangleMesh::Ptr
 depthmap_triangulate (FloatImage::ConstPtr dm, math::Matrix3f const& invproj,
     float dd_factor = 5.0f, mve::Image<unsigned int>* vids = nullptr);
 
+TriangleMesh::Ptr
+depthmap_triangulate (FloatImage::ConstPtr dm, OrthoParams const &invproj,
+    float dd_factor = 5.0f, mve::Image<unsigned int> *vids = nullptr);
+
 /**
  * A helper function that triangulates the given depth map with optional
  * color image (which generates additional per-vertex colors) in local
@@ -114,6 +126,10 @@ TriangleMesh::Ptr
 depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
     math::Matrix3f const& invproj, float dd_factor = 5.0f);
 
+TriangleMesh::Ptr
+depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
+    OrthoParams const& invproj, float dd_factor = 5.0f);
+
 /**
  * A helper function that triangulates the given depth map with optional
  * color image (which generates additional per-vertex colors) and transforms
@@ -122,6 +138,10 @@ depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
 TriangleMesh::Ptr
 depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
     CameraInfo const& cam, float dd_factor = 5.0f);
+
+TriangleMesh::Ptr
+depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
+    CameraInfo const &cam, OrthoParams const &ortho, float dd_factor = 5.0f);
 
 /**
  * Algorithm to triangulate range grids.
