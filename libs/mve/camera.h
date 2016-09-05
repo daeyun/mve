@@ -16,6 +16,11 @@
 
 MVE_NAMESPACE_BEGIN
 
+struct OrthoParams {
+    float top, right, bottom, left;
+    int height, width;
+};
+
 /**
  * Per-view camera information with various helper functions.
  * An invalid camera is indicated with focal length set to 0.0f.

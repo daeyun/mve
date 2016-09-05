@@ -144,6 +144,15 @@ pixel_footprint (std::size_t x, std::size_t y, float depth,
     return invproj[0] * depth / v.norm();
 }
 
+float
+pixel_footprint(std::size_t x, std::size_t y, float depth,
+    const OrthoParams& ortho)
+{
+    // Constant for a given OrthoParams.
+    return ((ortho.top - ortho.bottom) / static_cast<float>(ortho.height) +
+            (ortho.right - ortho.left) / static_cast<float>(ortho.width)) * 0.5f;
+}
+
 /* ---------------------------------------------------------------- */
 
 math::Vec3f
@@ -155,11 +164,47 @@ pixel_3dpos (std::size_t x, std::size_t y, float depth,
     return ray.normalized() * depth;
 }
 
+math::Vec3f
+pixel_3dpos(std::size_t x, std::size_t y, float depth,
+    const OrthoParams &ortho)
+{
+    math::Vec3f pos(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, -depth);
+    pos[0] = (pos[0] / static_cast<float>(ortho.width)) * (ortho.right - ortho.left) + ortho.left;
+    pos[1] = (pos[1] / static_cast<float>(ortho.height)) * -(ortho.top - ortho.bottom) + ortho.top;
+    return pos;
+}
+
 /* ---------------------------------------------------------------- */
 
 void
 dm_make_triangle (TriangleMesh* mesh, mve::Image<unsigned int>& vidx,
     FloatImage const* dm, math::Matrix3f const& invproj,
+    std::size_t i, int* tverts)
+{
+    int const width = vidx.width();
+    //int const height = vidx.height();
+    mve::TriangleMesh::VertexList& verts(mesh->get_vertices());
+    mve::TriangleMesh::FaceList& faces(mesh->get_faces());
+
+    for (int j = 0; j < 3; ++j)
+    {
+        int iidx = i + (tverts[j] % 2) + width * (tverts[j] / 2);
+        int x = iidx % width;
+        int y = iidx / width;
+        if (vidx.at(iidx) == MATH_MAX_UINT)
+        {
+            /* Add vertex for depth pixel. */
+            vidx.at(iidx) = verts.size();
+            float depth = dm->at(iidx, 0);
+            verts.push_back(pixel_3dpos(x, y, depth, invproj));
+        }
+        faces.push_back(vidx.at(iidx));
+    }
+}
+
+void
+dm_make_triangle (TriangleMesh* mesh, mve::Image<unsigned int>& vidx,
+    FloatImage const* dm, OrthoParams const& invproj,
     std::size_t i, int* tverts)
 {
     int const width = vidx.width();
@@ -317,10 +362,166 @@ depthmap_triangulate (FloatImage::ConstPtr dm, math::Matrix3f const& invproj,
     return mesh;
 }
 
+TriangleMesh::Ptr
+depthmap_triangulate(FloatImage::ConstPtr dm, OrthoParams const &invproj,
+    float dd_factor, mve::Image<unsigned int> *vids) {
+    if (dm == nullptr)
+        throw std::invalid_argument("Null depthmap given");
+
+    int const width = dm->width();
+    int const height = dm->height();
+
+    /* Prepare triangle mesh. */
+    TriangleMesh::Ptr mesh(TriangleMesh::create());
+
+    /* Generate image that maps image pixels to vertex IDs. */
+    mve::Image<unsigned int> vidx(width, height, 1);
+    vidx.fill(MATH_MAX_UINT);
+
+    /* Iterate over 2x2-blocks in the depthmap and create triangles. */
+    int i = 0;
+    for (int y = 0; y < height - 1; ++y, ++i) {
+        for (int x = 0; x < width - 1; ++x, ++i) {
+            /* Cache the four depth values. */
+            float depths[4] = {dm->at(i, 0), dm->at(i + 1, 0),
+                               dm->at(i + width, 0), dm->at(i + width + 1, 0)};
+
+            /* Create a mask representation of the available depth values. */
+            int mask = 0;
+            int pixels = 0;
+            for (int j = 0; j < 4; ++j)
+                if (depths[j] > 0.0f) {
+                    mask |= 1 << j;
+                    pixels += 1;
+                }
+
+            /* At least three valid depth values are required. */
+            if (pixels < 3)
+                continue;
+
+            /* Possible triangles, vertex indices relative to 2x2 block. */
+            int tris[4][3] = {
+                {0, 2, 1}, {0, 3, 1}, {0, 2, 3}, {1, 2, 3}
+            };
+
+            /* Decide which triangles to issue. */
+            int tri[2] = {0, 0};
+
+            switch (mask) {
+                case 7: tri[0] = 1;
+                break;
+                case 11: tri[0] = 2;
+                break;
+                case 13: tri[0] = 3;
+                break;
+                case 14: tri[0] = 4;
+                break;
+                case 15: {
+                    /* Choose the triangulation with smaller diagonal. */
+                    float ddiff1 = std::abs(depths[0] - depths[3]);
+                    float ddiff2 = std::abs(depths[1] - depths[2]);
+                    if (ddiff1 < ddiff2) {
+                        tri[0] = 2;
+                        tri[1] = 3;
+                    }
+                    else {
+                        tri[0] = 1;
+                        tri[1] = 4;
+                    }
+                    break;
+                }
+                default: continue;
+            }
+
+            /* Omit depth discontinuity detection if dd_factor is zero. */
+            if (dd_factor > 0.0f) {
+                /* Cache pixel footprints. */
+                float widths[4];
+                for (int j = 0; j < 4; ++j) {
+                    if (depths[j] == 0.0f)
+                        continue;
+                    widths[j] = pixel_footprint(x + (j % 2), y + (j / 2),
+                                                depths[j], invproj);// w, h, focal_len);
+                }
+
+                /* Check for depth discontinuities. */
+                for (int j = 0; j < 2 && tri[j] != 0; ++j) {
+                    int *tv = tris[tri[j] - 1];
+                    #define DM_DD_ARGS widths, depths, dd_factor
+                    if (dm_is_depthdisc(DM_DD_ARGS, tv[0], tv[1])) tri[j] = 0;
+                    if (dm_is_depthdisc(DM_DD_ARGS, tv[1], tv[2])) tri[j] = 0;
+                    if (dm_is_depthdisc(DM_DD_ARGS, tv[2], tv[0])) tri[j] = 0;
+                }
+            }
+
+            /* Build triangles. */
+            for (int j = 0; j < 2; ++j) {
+                if (tri[j] == 0) continue;
+                #define DM_MAKE_TRI_ARGS mesh.get(), vidx, dm.get(), invproj, i
+                dm_make_triangle(DM_MAKE_TRI_ARGS, tris[tri[j] - 1]);
+            }
+        }
+    }
+
+    /* Provide the vertex ID mapping if requested. */
+    if (vids != nullptr)
+        std::swap(vidx, *vids);
+
+    return mesh;
+}
+
 /* ---------------------------------------------------------------- */
 TriangleMesh::Ptr
 depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
     math::Matrix3f const& invproj, float dd_factor)
+{
+    if (dm == nullptr)
+        throw std::invalid_argument("Null depthmap given");
+
+    int const width = dm->width();
+    int const height = dm->height();
+
+    if (ci != nullptr && (ci->width() != width || ci->height() != height))
+        throw std::invalid_argument("Color image dimension mismatch");
+
+    /* Triangulate depth map. */
+    mve::Image<unsigned int> vids;
+    mve::TriangleMesh::Ptr mesh;
+    mesh = mve::geom::depthmap_triangulate(dm, invproj, dd_factor, &vids);
+
+    if (ci == nullptr)
+        return mesh;
+
+    /* Use vertex index mapping to color the mesh. */
+    mve::TriangleMesh::ColorList& colors(mesh->get_vertex_colors());
+    mve::TriangleMesh::VertexList const& verts(mesh->get_vertices());
+    colors.resize(verts.size());
+
+    int num_pixel = vids.get_pixel_amount();
+    for (int i = 0; i < num_pixel; ++i)
+    {
+        if (vids[i] == MATH_MAX_UINT)
+            continue;
+
+        math::Vec4f color(ci->at(i, 0), 0.0f, 0.0f, 255.0f);
+        if (ci->channels() >= 3)
+        {
+            color[1] = ci->at(i, 1);
+            color[2] = ci->at(i, 2);
+        }
+        else
+        {
+            color[1] = color[2] = color[0];
+        }
+        colors[vids[i]] = color / 255.0f;
+    }
+
+    return mesh;
+}
+
+TriangleMesh::Ptr
+depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
+    OrthoParams const& invproj, float dd_factor)
 {
     if (dm == nullptr)
         throw std::invalid_argument("Null depthmap given");
@@ -382,6 +583,28 @@ depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
     cam.fill_inverse_calibration(*invproj, dm->width(), dm->height());
     mve::TriangleMesh::Ptr mesh;
     mesh = mve::geom::depthmap_triangulate(dm, ci, invproj, dd_factor);
+
+    /* Transform mesh to world coordinates. */
+    math::Matrix4f ctw;
+    cam.fill_cam_to_world(*ctw);
+    mve::geom::mesh_transform(mesh, ctw);
+    mesh->recalc_normals(false, true); // Remove this?
+
+    return mesh;
+}
+
+TriangleMesh::Ptr
+depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
+    CameraInfo const& cam, OrthoParams const& ortho, float dd_factor)
+{
+    if (dm == nullptr)
+        throw std::invalid_argument("Null depthmap given");
+    if (cam.flen == 0.0f)
+        throw std::invalid_argument("Invalid camera given");
+
+    /* Triangulate depth map. */
+    mve::TriangleMesh::Ptr mesh;
+    mesh = mve::geom::depthmap_triangulate(dm, ci, ortho, dd_factor);
 
     /* Transform mesh to world coordinates. */
     math::Matrix4f ctw;
