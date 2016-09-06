@@ -1,0 +1,17 @@
+/libs/**/*.[oa]
+/apps/**/*.[oa]
+
+/libs/**/Makefile.dep
+/apps/**/Makefile.dep
+
+/apps/bundle2pset/bundle2pset
+/apps/dmrecon/dmrecon
+/apps/fssrecon/fssrecon
+/apps/makescene/makescene
+/apps/mesh2pset/mesh2pset
+/apps/meshalign/meshalign
+/apps/meshclean/meshclean
+/apps/meshconvert/meshconvert
+/apps/scene2pset/scene2pset
+/apps/sceneupgrade/sceneupgrade
+/apps/sfmrecon/sfmrecon
