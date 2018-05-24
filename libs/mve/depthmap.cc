@@ -471,9 +471,11 @@ depthmap_triangulate(FloatImage::ConstPtr dm, OrthoParams const &invproj,
 }
 
 /* ---------------------------------------------------------------- */
+
 TriangleMesh::Ptr
 depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
-    math::Matrix3f const& invproj, float dd_factor)
+    math::Matrix3f const& invproj, float dd_factor,
+    mve::Image<unsigned int>* vertex_ids)
 {
     if (dm == nullptr)
         throw std::invalid_argument("Null depthmap given");
@@ -515,6 +517,10 @@ depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
         }
         colors[vids[i]] = color / 255.0f;
     }
+
+    /* Provide the vertex ID mapping if requested. */
+    if (vertex_ids != nullptr)
+        std::swap(vids, *vertex_ids);
 
     return mesh;
 }
@@ -571,7 +577,8 @@ depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
 
 TriangleMesh::Ptr
 depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
-    CameraInfo const& cam, float dd_factor)
+    CameraInfo const& cam, float dd_factor,
+    mve::Image<unsigned int>* vertex_ids)
 {
     if (dm == nullptr)
         throw std::invalid_argument("Null depthmap given");
@@ -582,7 +589,7 @@ depthmap_triangulate (FloatImage::ConstPtr dm, ByteImage::ConstPtr ci,
     math::Matrix3f invproj;
     cam.fill_inverse_calibration(*invproj, dm->width(), dm->height());
     mve::TriangleMesh::Ptr mesh;
-    mesh = mve::geom::depthmap_triangulate(dm, ci, invproj, dd_factor);
+    mesh = mve::geom::depthmap_triangulate(dm, ci, invproj, dd_factor, vertex_ids);
 
     /* Transform mesh to world coordinates. */
     math::Matrix4f ctw;
